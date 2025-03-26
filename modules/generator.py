@@ -18,7 +18,7 @@ CUSTOM_API_KEY_NAME = "CUSTOM_LLM_API_KEY"
 # Базовый URL вашего OpenAI-совместимого провайдера
 CUSTOM_BASE_URL = "https://forgetapi.ru/v1"
 # Конкретное имя модели, которое вы хотите использовать и которое доступно у провайдера
-MODEL_NAME = "gpt-4o-latest" # Используем указанную вами модель
+MODEL_NAME = "gpt-4o-mini" # Используем указанную вами модель
 
 # --- Функции ---
 
