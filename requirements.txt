@@ -1,11 +1,25 @@
+# requirements.txt
+
 streamlit
-langchain
-langchain-openai
-langchain-community
-faiss-cpu
-pydantic
-python-dotenv
-wikipedia
-sentence-transformers
 pandas
-openai
+python-dotenv
+openai>=1.0.0 # Рекомендуется для совместимости с ChatOpenAI
+pydantic
+
+# --- LangChain ---
+# Основной пакет LangChain (укажите версию >= 0.1.0)
+# Версия 0.1.0 и выше включает langchain-core
+langchain>=0.1.0
+# Пакет для интеграции с OpenAI (и совместимыми API)
+langchain-openai
+# Пакет с большинством интеграций (векторные хранилища, эмбеддеры и т.д.)
+langchain-community
+
+# --- RAG компоненты ---
+# Векторная база данных
+faiss-cpu
+# Модель эмбеддингов (если используете HuggingFace)
+sentence-transformers
+
+# Опционально, если использовали wikipedia парсер
+# wikipedia
