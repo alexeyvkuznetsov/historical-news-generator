@@ -172,3 +172,15 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+.env
+__pycache__/
+*.pyc
+*.env
+venv/
+.venv/
+# Папки IDE, если используете:
+.idea/
+.vscode/
+# Возможные локальные индексы FAISS, если сохраняли:
+faiss_index/
