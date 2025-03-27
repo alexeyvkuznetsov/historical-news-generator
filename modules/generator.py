@@ -45,7 +45,7 @@ def get_llm():
         raise ValueError("FORGETAPI_BASE_URL не найден.")
 
     llm = ChatOpenAI(
-        model="gpt-3.5-turbo", # Или другая модель, доступная через ваш BASE_URL
+        model="gpt-4o", # Или другая модель, доступная через ваш BASE_URL
         openai_api_key=API_KEY,
         openai_api_base=BASE_URL,
         temperature=0.7,
@@ -86,7 +86,7 @@ JSON должен строго соответствовать следующей
     return chain
 
 # --- Функция generate_news ---
-def generate_news(target_date: str, era_style: str = "XVIII", num_articles: int = 3) -> NewsReport:
+def generate_news(target_date: str, era_style: str = "XIX", num_articles: int = 3) -> NewsReport:
     """Основная функция для генерации новостей с обработкой ошибок и повторными попытками."""
     global last_error # Объявляем, что будем менять глобальную переменную
     last_error = None # Сбрасываем ошибку перед каждым новым запуском
@@ -101,7 +101,7 @@ def generate_news(target_date: str, era_style: str = "XVIII", num_articles: int 
             st.warning(f"Не найдено релевантных исторических событий для даты '{target_date}'. Генерация невозможна.")
             return NewsReport(articles=[]) # Возвращаем пустой отчет
         context = "\n\n".join([doc.page_content for doc in relevant_docs])
-        print(f"Найденный контекст (первые 500 символов):\n{context[:500]}...")
+        print(f"Найденный контекст (первые 500 символов):\n{context[:600]}...")
     except Exception as e:
         st.error(f"Ошибка при поиске событий в RAG: {e}")
         print(f"Полная ошибка RAG: {e}") # Лог для детальной отладки
