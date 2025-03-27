@@ -38,10 +38,10 @@ col1, col2 = st.columns([1, 2])
 with col1:
     default_date = datetime.date(1800, 1, 1)
     selected_date = st.date_input(
-        "Выберите дату для выпуска газеты:",
+        "Выберите дату для выпуска газеты (с 1800 по 1830 годы):",
         value=default_date,
         min_value=datetime.date(1800, 1, 1), # Ограничим разумно данными базы
-        max_value=datetime.date.today()
+        max_value=datetime.date(1830, 1, 1)
     )
     # Формат для отображения и для передачи в функцию генерации
     selected_date_str = selected_date.strftime("%d %B %Y")
