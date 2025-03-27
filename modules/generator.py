@@ -5,19 +5,17 @@ import time
 import json
 import re
 from dotenv import load_dotenv
-# ---> Новые импорты <---
-import datetime
-import locale
-from pydantic import ValidationError
-# ---> Конец новых импортов <---
-
 
 # Импорты LangChain
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import PydanticOutputParser
+# Импортируем САМ МОДУЛЬ exceptions из langchain_core
 from langchain_core import exceptions
 from langchain_core.runnables import RunnablePassthrough
+# Импортируем Pydantic ValidationError отдельно для ручного парсинга
+from pydantic import ValidationError
+
 
 # Импорты вашего проекта
 from .models import NewsReport
@@ -26,198 +24,134 @@ from .rag import get_retriever
 load_dotenv()
 
 # --- Конфигурация API ---
+# Используем ваш FORGETAPI_KEY и BASE_URL из секретов Streamlit или .env
 API_KEY = st.secrets.get("FORGETAPI_KEY", os.getenv("FORGETAPI_KEY"))
-BASE_URL = st.secrets.get("FORGETAPI_BASE_URL", os.getenv("FORGETAPI_BASE_URL", "https://forgetapi.ru/v1"))
+BASE_URL = st.secrets.get("FORGETAPI_BASE_URL", os.getenv("FORGETAPI_BASE_URL", "https://forgetapi.ru/v1")) # Укажите URL по умолчанию, если нужно
 MAX_RETRIES = 2
+# Глобальная переменная для хранения последней ошибки (для app.py)
 last_error = None
 
-# ---> Установка локали для парсинга русских месяцев <---
-try:
-    # Попробуем установить русскую локаль. Может не сработать на всех системах (особенно в Streamlit Cloud без доп. настроек)
-    locale.setlocale(locale.LC_TIME, 'ru_RU.UTF-8')
-    print("Русская локаль (ru_RU.UTF-8) установлена успешно.")
-except locale.Error:
-    print("Предупреждение: Не удалось установить локаль ru_RU.UTF-8. Парсинг русских месяцев может не работать.")
-    # Можно попробовать альтернативную локаль или оставить системную по умолчанию
-    try:
-        # Попытка использовать стандартную русскую локаль Windows
-        locale.setlocale(locale.LC_TIME, 'russian')
-        print("Русская локаль ('russian') установлена успешно.")
-    except locale.Error:
-        print("Предупреждение: Не удалось установить локаль 'russian'. Используется системная локаль по умолчанию.")
-# ---> Конец установки локали <---
-
-
-# --- Функция get_llm (без изменений) ---
+# --- Функция get_llm ---
 def get_llm():
+    """Инициализирует LLM с заданными параметрами."""
     if not API_KEY:
-        st.error("Критическая ошибка: Не найден API ключ для 'forgetapi'.")
+        # Используем st.error для отображения в UI Streamlit, если ключ не найден при запуске
+        st.error("Критическая ошибка: Не найден API ключ для 'forgetapi'. Добавьте FORGETAPI_KEY в секреты Streamlit или в .env файл.")
+        # Выбрасываем ValueError, чтобы остановить выполнение, если ключ абсолютно необходим
         raise ValueError("FORGETAPI_KEY не найден.")
     if not BASE_URL:
-        st.error("Критическая ошибка: Не найден BASE_URL для 'forgetapi'.")
+        # Аналогично для BASE_URL
+        st.error("Критическая ошибка: Не найден BASE_URL для 'forgetapi'. Добавьте FORGETAPI_BASE_URL в секреты Streamlit или в .env файл.")
         raise ValueError("FORGETAPI_BASE_URL не найден.")
+
     llm = ChatOpenAI(
-        model="gpt-3.5-turbo",
+        model="gpt-3.5-turbo", # Или другая модель, доступная через ваш BASE_URL
         openai_api_key=API_KEY,
         openai_api_base=BASE_URL,
         temperature=0.7,
-        request_timeout=120
+        request_timeout=120 # Увеличьте, если запросы часто прерываются по таймауту
     )
     return llm
 
-# --- Функция create_generation_chain (без изменений) ---
+# --- Функция create_generation_chain ---
 def create_generation_chain():
-    llm = get_llm()
+    """Создает LangChain цепочку для генерации структурированных новостей."""
+    llm = get_llm() # Получаем настроенный LLM
+    # Создаем парсер на основе Pydantic модели NewsReport
     pydantic_parser = PydanticOutputParser(pydantic_object=NewsReport)
+    # Получаем инструкции по форматированию для LLM
     format_instructions = pydantic_parser.get_format_instructions()
+
+    # Определяем шаблон промпта с инструкциями и плейсхолдерами
     prompt = ChatPromptTemplate.from_messages([
          ("system", """Ты — остроумный и немного саркастичный редактор исторической газеты 'Хронографъ'.
 Твоя задача — написать сводку новостей для выпуска газеты на заданную дату.
 Используй следующие реальные исторические события как основу, но добавь детали, юмор, вымышленных персонажей или комментарии в стиле газеты {era_style} века.
+
 ВАЖНО: Весь твой ответ ДОЛЖЕН быть ТОЛЬКО JSON объектом, без какого-либо другого текста до или после него.
 JSON должен строго соответствовать следующей структуре (не включай ```json или ``` в свой ответ):
 {format_instructions}
+
 Реальные события (контекст):
 {context}"""),
+        # Пользовательский запрос с параметрами
         ("user", "Пожалуйста, напиши новости для даты {date_input}. Используй примерно {num_articles} события из контекста. Стиль: {era_style} век.")
     ])
+
+    # Создаем цепочку: Промпт -> LLM -> Парсер Pydantic
+    # Парсер автоматически попытается разобрать вывод LLM в объект NewsReport
     chain = prompt | llm | pydantic_parser
+    # Опционально: можно добавить логгирование сырого вывода LLM перед парсером для отладки
+    # chain = prompt | llm | RunnablePassthrough(lambda x: print(f"--- LLM Raw Output ---\n{x.content}\n---")) | pydantic_parser
     return chain
 
-# ---> Новая вспомогательная функция для парсинга дат <---
-def parse_date_robust(date_str: str, fmt: str = "%Y-%m-%d") -> datetime.date | None:
-    """Пытается распарсить строку даты, возвращает date или None."""
+# --- Функция generate_news ---
+def generate_news(target_date: str, era_style: str = "XVIII", num_articles: int = 3) -> NewsReport:
+    """Основная функция для генерации новостей с обработкой ошибок и повторными попытками."""
+    global last_error # Объявляем, что будем менять глобальную переменную
+    last_error = None # Сбрасываем ошибку перед каждым новым запуском
+    print(f"Запрос на генерацию новостей для даты: {target_date}, стиль: {era_style}")
+
+    # 1. Получаем контекст из RAG
     try:
-        return datetime.datetime.strptime(date_str, fmt).date()
-    except (ValueError, TypeError):
-        # Попытка распарсить только год, если формат не подошел
-        try:
-             year = int(date_str)
-             # Возвращаем дату на середину года для событий, известных только по году
-             # Это спорное решение, но позволяет включить их в годовой фильтр
-             return datetime.date(year, 6, 15)
-        except (ValueError, TypeError):
-            print(f"Предупреждение: Не удалось распарсить дату '{date_str}' с форматом '{fmt}' или как год.")
-            return None
-# ---> Конец новой функции <---
-
-
-# --- Функция generate_news (ИЗМЕНЕНИЯ в получении и фильтрации контекста) ---
-def generate_news(target_date_str: str, era_style: str = "XVIII", num_articles: int = 3, date_window_days: int = 7) -> NewsReport:
-    """Основная функция для генерации новостей с фильтрацией по дате."""
-    global last_error
-    last_error = None
-    print(f"Запрос на генерацию: дата='{target_date_str}', стиль={era_style}, статьи={num_articles}, окно={date_window_days} дней")
-
-    # 1. Парсим целевую дату от пользователя
-    try:
-        # Используем формат, который приходит из Streamlit date_input (%d %B %Y)
-        target_date_obj = datetime.datetime.strptime(target_date_str, "%d %B %Y").date()
-        print(f"Целевая дата распарсена: {target_date_obj}")
-    except ValueError as e:
-        st.error(f"Не удалось распознать введенную дату '{target_date_str}'. Ошибка: {e}")
-        print(f"Ошибка парсинга целевой даты: {e}")
-        last_error = e
-        return NewsReport(articles=[])
-
-    # 2. Получаем БОЛЬШЕ кандидатов из RAG
-    try:
-        # Запрашиваем больше документов, например, в 3 раза больше, чем нужно, но не менее 5
-        rag_k = max(num_articles * 3, 10)
-        print(f"Запрос к RAG: k={rag_k}")
-        retriever = get_retriever(k=rag_k)
-        query = f"Исторические события около {target_date_str}" # Запрос оставляем общим
-        all_docs = retriever.invoke(query)
-        print(f"RAG вернул {len(all_docs)} кандидатов.")
-        if not all_docs:
-            st.warning(f"RAG не вернул никаких событий для запроса '{query}'.")
-            return NewsReport(articles=[])
-
+        retriever = get_retriever(k=num_articles + 2) # Запросим чуть больше контекста
+        query = f"События около {target_date}"
+        relevant_docs = retriever.invoke(query)
+        if not relevant_docs:
+            st.warning(f"Не найдено релевантных исторических событий для даты '{target_date}'. Генерация невозможна.")
+            return NewsReport(articles=[]) # Возвращаем пустой отчет
+        context = "\n\n".join([doc.page_content for doc in relevant_docs])
+        print(f"Найденный контекст (первые 500 символов):\n{context[:500]}...")
     except Exception as e:
         st.error(f"Ошибка при поиске событий в RAG: {e}")
-        print(f"Полная ошибка RAG: {e}")
+        print(f"Полная ошибка RAG: {e}") # Лог для детальной отладки
         last_error = e
-        return NewsReport(articles=[])
+        return NewsReport(articles=[]) # Возвращаем пустой отчет при ошибке RAG
 
-    # 3. Фильтруем кандидатов по дате
-    filtered_docs = []
-    print(f"Фильтрация по дате: окно +/- {date_window_days} дней от {target_date_obj}")
-    for doc in all_docs:
-        doc_date_str = doc.metadata.get('date')
-        if not doc_date_str:
-            print(f"Предупреждение: Документ без даты в метаданных: {doc.page_content[:50]}...")
-            continue
-
-        # Парсим дату из метаданных (ожидаем YYYY-MM-DD или только YYYY)
-        doc_date_obj = parse_date_robust(doc_date_str) # Используем новую функцию
-
-        if doc_date_obj:
-            # Проверяем попадание в окно (если задано окно > 0)
-            if date_window_days >= 0:
-                delta = abs((doc_date_obj - target_date_obj).days)
-                if delta <= date_window_days:
-                    print(f"  [OK] Документ от {doc_date_obj} попадает в окно (+/-{date_window_days} дн.). Дельта: {delta} дн.")
-                    filtered_docs.append(doc)
-                # else:
-                #     print(f"  [Пропуск] Документ от {doc_date_obj} не попадает в окно (+/-{date_window_days} дн.). Дельта: {delta} дн.")
-            else: # Если date_window_days < 0, окно не применяем (берем все)
-                 filtered_docs.append(doc)
-
-        # Опционально: можно добавить логику для фильтрации по году/месяцу, если окно не задано
-
-    print(f"После фильтрации по дате осталось {len(filtered_docs)} документов.")
-
-    # Если после фильтрации ничего не осталось
-    if not filtered_docs:
-        st.warning(f"Не найдено событий в базе данных близко к дате '{target_date_str}' (в пределах +/- {date_window_days} дней).")
-        # Можно попробовать ослабить фильтр или сообщить пользователю
-        # Например, попробовать найти события за тот же месяц/год? (требует доп. логики)
-        return NewsReport(articles=[])
-
-    # 4. Ограничиваем количество и формируем контекст
-    # Берем не больше num_articles документов из отфильтрованных
-    final_docs = filtered_docs[:num_articles]
-    context = "\n\n".join([doc.page_content for doc in final_docs])
-    print(f"Итоговый контекст для LLM сформирован из {len(final_docs)} документов.")
-    # print(f"Итоговый контекст:\n{context[:500]}...") # Раскомментировать для отладки
-
-    # 5. Генерируем новости (остальная часть функции почти без изменений)
+    # 2. Генерируем новости с помощью LLM и парсера
     try:
         chain = create_generation_chain()
+        # Получаем инструкции по форматированию еще раз (хотя они уже внутри chain)
         pydantic_parser = PydanticOutputParser(pydantic_object=NewsReport)
         format_instructions = pydantic_parser.get_format_instructions()
-    except ValueError as ve:
+    except ValueError as ve: # Ловим ошибку инициализации LLM (например, нет ключа)
         st.error(f"Ошибка конфигурации LLM: {ve}")
         last_error = ve
         return NewsReport(articles=[])
 
     for attempt in range(MAX_RETRIES):
-        print(f"Попытка генерации LLM {attempt + 1}/{MAX_RETRIES}...")
+        print(f"Попытка генерации {attempt + 1}/{MAX_RETRIES}...")
         try:
+            # Формируем входные данные для цепочки
             chain_input = {
-                "date_input": target_date_str, # Передаем исходную строку даты
+                "date_input": target_date,
                 "era_style": era_style,
-                "num_articles": len(final_docs), # Передаем фактическое кол-во статей в контексте
-                "context": context, # Передаем отфильтрованный контекст
-                "format_instructions": format_instructions
+                "num_articles": num_articles,
+                "context": context,
+                "format_instructions": format_instructions # Передаем инструкции в контекст промпта
             }
+            # Запускаем цепочку
             result = chain.invoke(chain_input)
 
+            # Проверяем, что результат имеет ожидаемый тип (NewsReport)
             if isinstance(result, NewsReport):
-                print("Генерация и парсинг LLM прошли успешно.")
-                last_error = None
-                return result
+                print("Генерация и парсинг прошли успешно.")
+                last_error = None # Сбрасываем ошибку при успехе
+                return result # Возвращаем успешный результат
             else:
-                # Обработка неожиданного типа результата
+                # Если парсер вернул что-то другое (например, строку при ошибке)
                 print(f"Неожиданный тип результата от парсера: {type(result)}. Результат: {result}")
-                last_error = exceptions.OutputParsingError(f"Неожиданный тип результата: {type(result)}")
+                last_error = exceptions.OutputParsingError(f"Неожиданный тип результата от парсера: {type(result)}")
+                # Попытка ручного извлечения JSON из строки (если result это строка)
                 if isinstance(result, str):
                     try:
+                         # Ищем JSON объект в строке
                          json_match = re.search(r'\{.*\}', result, re.DOTALL)
                          if json_match:
                             json_str = json_match.group(0)
                             parsed_json = json.loads(json_str)
-                            news_report = NewsReport.model_validate(parsed_json)
+                            # Валидируем вручную распарсенный JSON через Pydantic
+                            news_report = NewsReport.model_validate(parsed_json) # Используем model_validate для Pydantic v2+
                             print("Удалось вручную распарсить и валидировать JSON из строки.")
                             last_error = None
                             return news_report
@@ -227,40 +161,51 @@ def generate_news(target_date_str: str, era_style: str = "XVIII", num_articles: 
                     except (json.JSONDecodeError, ValidationError) as manual_parse_error:
                         print(f"Ошибка ручного парсинга/валидации JSON: {manual_parse_error}")
                         last_error = exceptions.OutputParsingError(f"Ошибка ручного парсинга/валидации JSON: {manual_parse_error}")
+                # Если ручной парсинг не удался или тип был не строка, переходим к следующей попытке
 
+        # Ловим специфичную ошибку парсинга от LangChain
         except exceptions.OutputParsingError as ope:
-            # Обработка ошибки парсинга
             print(f"Ошибка парсинга Pydantic на попытке {attempt + 1}: {ope}")
+            # Пытаемся получить сырой вывод LLM из атрибутов ошибки, если он там есть
             raw_output = getattr(ope, 'llm_output', str(ope))
+            # Выводим предупреждение в UI
             st.warning(f"Попытка {attempt + 1}: Не удалось разобрать ответ LLM. Пробуем снова...")
             print(f"--- Сырой вывод LLM (при ошибке парсинга) ---\n{raw_output}\n---")
-            last_error = ope
+            last_error = ope # Сохраняем ошибку
+            # Ждем немного перед следующей попыткой
             time.sleep(2)
 
+        # Ловим другие возможные ошибки (сетевые, API и т.д.)
         except Exception as e:
-            # Обработка других ошибок
             print(f"Неожиданная ошибка на попытке {attempt + 1}: {e}")
             st.error(f"Произошла неожиданная ошибка при генерации: {e}")
-            last_error = e
-            break
+            last_error = e # Сохраняем ошибку
+            break # Прерываем цикл попыток при других ошибках
 
     # Если все попытки не удались
     st.error(f"Не удалось сгенерировать новости после {MAX_RETRIES} попыток.")
     if last_error:
+        # Показываем последнюю ошибку в UI
         st.error(f"Детали последней ошибки: {last_error}")
+        # Если в ошибке был сырой вывод, покажем его для отладки
         raw_output = getattr(last_error, 'llm_output', None)
         if raw_output:
             st.text_area("Последний сырой ответ от LLM (для отладки):", str(raw_output), height=200)
 
+    # Возвращаем пустой отчет, если ничего не получилось
     return NewsReport(articles=[])
 
-# --- Блок для локального тестирования (без изменений) ---
+# --- Блок для локального тестирования ---
 if __name__ == '__main__':
-    # ... (остальной тестовый блок без изменений) ...
     print("Запуск локального теста генератора...")
-    test_date = "07 Сентября 1812" # Пример даты
+    test_date = "14 июля 1789" # Пример даты
     try:
-        report = generate_news(test_date, era_style="XIX", num_articles=2, date_window_days=3) # Тест с окном +/- 3 дня
+        # Убедитесь, что переменные окружения установлены для локального теста
+        # Например, через os.environ или .env файл, который читается load_dotenv()
+        # os.environ.setdefault("FORGETAPI_KEY", "ВАШ_КЛЮЧ_ЗДЕСЬ")
+        # os.environ.setdefault("FORGETAPI_BASE_URL", "https://forgetapi.ru/v1")
+
+        report = generate_news(test_date, era_style="XVIII", num_articles=2)
 
         if report and report.articles:
             print(f"\n--- Сгенерированный отчет для {test_date} ---")
@@ -272,7 +217,7 @@ if __name__ == '__main__':
                 print(f"Текст: {article.body}")
             print("--- Конец отчета ---")
         else:
-            print("Не удалось сгенерировать новости.")
+            print("Не удалось сгенерировать новости (возможно, после всех попыток).")
 
     except ValueError as ve:
          print(f"Ошибка конфигурации при тесте: {ve}")
