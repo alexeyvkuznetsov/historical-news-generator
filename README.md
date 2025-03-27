@@ -185,5 +185,5 @@
 *   Результат (сгенерированные новости или сообщения об ошибках/статусе) отображается в основной части страницы.
 
 ### Ссылки
-*   **GitHub репозиторий:** `[https://github.com/alexeyvkuznetsov/historical-news-generator]`
-*   **Работающее приложение:** `[https://historical-news-generator.streamlit.app/]`
+*   **GitHub репозиторий:** [https://github.com/alexeyvkuznetsov/historical-news-generator](https://github.com/alexeyvkuznetsov/historical-news-generator)
+*   **Работающее приложение:** [https://historical-news-generator.streamlit.app/](https://historical-news-generator.streamlit.app/)
